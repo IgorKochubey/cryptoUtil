@@ -11,7 +11,7 @@ mvn clean-package
 
 ## настройка
 в папке рядом с jar должны быть файлы:
-1) input.txt (внутри него json)
+1) [input.txt](input.txt)
 2) [application.properties](application.properties)
 
 ## [application.properties](application.properties):
