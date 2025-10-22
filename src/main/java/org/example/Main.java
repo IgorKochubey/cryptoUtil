@@ -1,24 +1,43 @@
 package org.example;
 
+import javax.net.ssl.HttpsURLConnection;
 import java.io.*;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
-import java.net.URL;
 import java.util.Base64;
-import javax.net.ssl.HttpsURLConnection;
+import java.util.Properties;
 
 public class Main {
 
     public static void main(String[] args) throws Exception {
-//        LK_RECEIPT = вывод из оборота
-//        SETS_AGGREGATION = формирование набора
-        if (args.length < 2) {
-            System.out.println("Использование: java -jar crypto.jar <inputFile> <certSerial> <typeDocument>");
+        // --- 0. Загружаем application.properties ---
+        Properties props = new Properties();
+        File propsFile = new File("application.properties");
+        if (!propsFile.exists()) {
+            System.err.println("❌ Файл application.properties не найден рядом с JAR!");
+            return;
+        }
+
+        try (FileInputStream fis = new FileInputStream(propsFile)) {
+            props.load(fis);
+        }
+
+        String certSerial = props.getProperty("certSerial");
+        String csptestPath = props.getProperty("csptestPath");
+
+        if (certSerial == null || certSerial.isEmpty() || csptestPath == null || csptestPath.isEmpty()) {
+            System.err.println("❌ В файле application.properties должны быть заданы certSerial и csptestPath");
+            return;
+        }
+
+        if (args.length < 3) {
+            System.out.println("Использование: java -jar crypto.jar <inputFile> <certSerial> <inn> <typeDocument>");
             return;
         }
 
         String inputFile = args[0];
-        String certSerial = args[1];
+        String inn = args[1];
         String typeDocument = args[2];
 
         String baseUrl = "https://markirovka.sandbox.crptech.ru/api/v3/true-api";
@@ -26,7 +45,7 @@ public class Main {
         String urlAuthSignIn = baseUrl + "/auth/simpleSignIn";
         String urlCreateDoc = baseUrl + "/lk/documents/create?pg=petfood";
 
-        // --- 1. Получаем данные для подписи (uuid + data) ---
+        // --- 1. Получаем данные для подписи ---
         System.out.println("🔹 Запрашиваем данные для подписи...");
         URL authKeyUrl = new URL(urlAuthKey);
         HttpsURLConnection authKeyConn = (HttpsURLConnection) authKeyUrl.openConnection();
@@ -59,7 +78,7 @@ public class Main {
         Files.write(tempIn.toPath(), data.getBytes(StandardCharsets.UTF_8));
 
         ProcessBuilder pb = new ProcessBuilder(
-                "/opt/cprocsp/bin/amd64/csptest",
+                csptestPath,
                 "-sfsign", "-sign",
                 "-in", tempIn.getAbsolutePath(),
                 "-out", tempOut.getAbsolutePath(),
@@ -86,8 +105,8 @@ public class Main {
         System.out.println("🔹 Отправляем подписанные данные для получения токена...");
 
         String authBody = String.format(
-                "{ \"uuid\":\"%s\", \"data\":\"%s\" }",
-                uuid, signatureBase64
+                "{ \"uuid\":\"%s\", \"data\":\"%s\", \"inn\":\"%s\" }",
+                uuid, signatureBase64, inn
         );
 
         URL authSignUrl = new URL(urlAuthSignIn);
@@ -122,7 +141,7 @@ public class Main {
         String compactJson = new String(inputBytes, StandardCharsets.UTF_8).replaceAll("\\s+", "");
         String base64Document = Base64.getEncoder().encodeToString(compactJson.getBytes(StandardCharsets.UTF_8));
 
-        // --- Подписываем сам документ ---
+        // --- Подписываем документ ---
         System.out.println("🔹 Подписываем документ для отправки...");
 
         File docIn = File.createTempFile("doc", ".txt");
@@ -130,7 +149,7 @@ public class Main {
         Files.write(docIn.toPath(), compactJson.getBytes(StandardCharsets.UTF_8));
 
         ProcessBuilder pbDoc = new ProcessBuilder(
-                "/opt/cprocsp/bin/amd64/csptest",
+                csptestPath,
                 "-sfsign", "-sign",
                 "-in", docIn.getAbsolutePath(),
                 "-out", docOut.getAbsolutePath(),
@@ -182,9 +201,32 @@ public class Main {
             System.err.println("Ошибка сервера: " + response);
             String msg = extractJsonValue(response, "error_message");
             if (msg != null) System.err.println("Сообщение ошибки: " + msg);
+            return;
         } else {
             System.out.println("Response: " + response);
         }
+
+        // --- 6. Проверяем статус созданного документа ---
+        System.out.println("🔹 Проверяем статус документа...");
+
+        String docUid = response.trim();
+        String urlDocInfo = "https://markirovka.sandbox.crptech.ru/api/v4/true-api/doc/" + docUid + "/info";
+
+        System.out.println("urlDocInfo = " + urlDocInfo);
+        Thread.sleep(1500); //wait for created
+
+        URL docInfoUrl = new URL(urlDocInfo);
+        HttpsURLConnection infoConn = (HttpsURLConnection) docInfoUrl.openConnection();
+        infoConn.setRequestMethod("GET");
+        infoConn.setRequestProperty("Accept", "application/json");
+        infoConn.setRequestProperty("Authorization", "Bearer " + bearerToken);
+
+        int infoCode = infoConn.getResponseCode();
+        String infoResponse = readStream(infoCode >= 400 ? infoConn.getErrorStream() : infoConn.getInputStream());
+
+        System.out.println("Status code (info): " + infoCode);
+        System.out.println("Ответ /doc/{uid}/info:");
+        System.out.println(infoResponse);
     }
 
     // --- Вспомогательные методы ---

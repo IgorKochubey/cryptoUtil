@@ -1,0 +1,13 @@
+{
+  "inn":"7721788616",
+  "action":"DISTANCE",
+  "action_date":"2025-10-16",
+  "document_type":"CONSIGNMENT_NOTE",
+  "document_number":"22223",
+  "document_date":"2025-10-16",
+  "products":[
+    {
+      "cis":"0100064992642549215CU8Uf"
+    }
+  ]
+}
